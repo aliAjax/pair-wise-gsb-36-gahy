@@ -1,18 +1,187 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水资源权配置</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 18px}input,select,button{padding:7px;margin:3px}.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}pre{background:#f5f7f9;padding:12px;overflow:auto}small{color:#667}button{cursor:pointer}</style></head>
-<body><h1>跨区域水资源使用权</h1><p>示例账户初始化后，可查看余额、发起转让、审核，并模拟干旱分配。</p>
-<div class="card"><h2>身份</h2><input id="user" value="alice"><select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select></div>
-<div class="card"><h2>账户</h2><button onclick="getAccounts()">刷新账户</button><pre id="accounts">等待操作…</pre></div>
-<div class="card"><h2>发起转让</h2><input id="from" type="number" value="1" placeholder="转出账户"><input id="to" type="number" value="2" placeholder="转入账户"><input id="amount" type="number" value="400"><input id="date" type="date" value="2026-06-01"><button onclick="transfer()">提交审批</button><pre id="result"></pre></div>
-<div class="card"><h2>审批最新转让</h2><input id="transfer_id" type="number" placeholder="转让 ID"><button onclick="approve()">批准</button><button onclick="reject()">退回</button></div>
-<div class="card"><h2>干旱情景</h2><input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1"><button onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre></div>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>生态预留台</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;max-width:1040px;margin:32px auto;padding:0 18px;color:#1f2d3a}
+h1{margin-bottom:4px}.sub{color:#667;margin-top:0}
+input,select,button{padding:7px;margin:3px;font-size:14px}
+button{cursor:pointer;border-radius:6px;border:1px solid #9fb3c4;background:#f4f8fb}
+button.primary{background:#1f6f54;color:#fff;border-color:#1f6f54}
+button.warn{background:#9a4a2f;color:#fff;border-color:#9a4a2f}
+.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}
+.card h2{margin:0 0 10px;font-size:17px}
+pre{background:#f5f7f9;padding:12px;overflow:auto;border-radius:6px;font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border:1px solid #dde5ec;padding:6px 8px;text-align:left}
+th{background:#eef3f7}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
+.tag.pending{background:#fff2cc}.tag.active{background:#d7f0e2}.tag.released{background:#e6e6e6}
+.tag.open{background:#fad9d2}.tag.resolved{background:#e6e6e6}
+#previewBox{display:none;border:1px solid #1f6f54;border-radius:8px;padding:12px;margin-top:10px;background:#f2faf6}
+.muted{color:#667;font-size:13px}
+</style></head>
+<body>
+<h1>生态预留台</h1>
+<p class="sub">河道生态调度员登记夏季预留水：预检可用额度变化与被挤到的待审转让，确认后留待处理，生效起转让、取水、干旱分配均按扣减后额度计算。</p>
+
+<div class="card"><h2>身份</h2>
+  <input id="user" value="alice"><select id="role">
+  <option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select>
+  <span class="muted">editor＝生态调度员；预留的生效与解除只有 editor 可执行。</span>
+</div>
+
+<div class="card"><h2>账户与扣减后额度</h2>
+  截至日期 <input id="availDate" type="date"><button onclick="getAccounts()">刷新</button>
+  <table id="accountTable"><thead><tr><th>ID</th><th>账户</th><th>地区</th><th>优先级</th>
+  <th>许可额度</th><th>已用</th><th>生态预留</th><th>扣减后许可</th><th>待审预占</th><th>可用</th></tr></thead><tbody></tbody></table>
+</div>
+
+<div class="card"><h2>登记生态预留</h2>
+  <div>账户 <input id="rAccount" type="number" value="1" style="width:90px">
+  开始 <input id="rStart" type="date" value="2026-07-01">
+  结束 <input id="rEnd" type="date" value="2026-09-30">
+  水量 <input id="rAmount" type="number" value="200" style="width:110px"></div>
+  <div>依据 <input id="rBasis" style="width:380px" placeholder="如：夏季河道生态基流调度令 2026-夏-07" value="夏季河道生态基流调度令 2026-夏-07">
+  经办人 <input id="rOperator" value="河道生态调度员"></div>
+  <button class="primary" onclick="previewReservation()">预检：可用额度变化与挤占转让</button>
+  <div id="previewBox"></div>
+  <pre id="rResult"></pre>
+</div>
+
+<div class="card"><h2>预留记录</h2><button onclick="loadReservations()">刷新</button>
+  <table id="reservationTable"><thead><tr><th>ID</th><th>账户</th><th>区间</th><th>水量</th>
+  <th>依据</th><th>经办人</th><th>状态</th><th>已恢复</th><th>操作</th></tr></thead><tbody></tbody></table>
+</div>
+
+<div class="card"><h2>待处理区：被挤到的待审转让</h2><button onclick="loadConflicts()">刷新</button>
+  <table id="conflictTable"><thead><tr><th>冲突ID</th><th>预留</th><th>账户</th><th>转让ID</th>
+  <th>转让量</th><th>生效日</th><th>缺口</th><th>状态</th><th>说明</th></tr></thead><tbody></tbody></table>
+</div>
+
+<div class="card"><h2>发起转让</h2>
+  <input id="from" type="number" value="1" style="width:80px" title="转出账户">
+  <input id="to" type="number" value="2" style="width:80px" title="转入账户">
+  <input id="amount" type="number" value="100" style="width:100px">
+  <input id="date" type="date" value="2026-06-01">
+  <button onclick="transfer()">提交审批</button>
+</div>
+
+<div class="card"><h2>审批转让</h2>
+  <input id="transfer_id" type="number" placeholder="转让 ID" style="width:120px">
+  <button onclick="approve()">批准</button><button onclick="reject()">退回</button>
+  <pre id="result"></pre>
+</div>
+
+<div class="card"><h2>干旱情景（按扣减后额度分配）</h2>
+  供水 <input id="supply" type="number" value="1200" style="width:110px">
+  削减 <input id="reduction" type="number" value="0.3" step="0.1" style="width:90px">
+  日期 <input id="droughtDate" type="date" value="2026-08-01">
+  <button onclick="simulate()">模拟</button>
+  <pre id="drought">等待操作…</pre>
+</div>
+
 <script>
+const $=id=>document.getElementById(id);
 const headers=()=>({'Content-Type':'application/json','X-User':user.value,'X-Role':role.value});
 async function call(url,opts={}){const r=await fetch(url,opts);const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
-async function getAccounts(){try{accounts.textContent=JSON.stringify(await call('/api/accounts'),null,2)}catch(e){accounts.textContent=e.message}}
-async function transfer(){try{result.textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2)}catch(e){result.textContent=e.message}}
-async function approve(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function reject(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function simulate(){try{drought.textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value),null,2)}catch(e){drought.textContent=e.message}}
+function show(id,e){$(id).textContent=e&&e.message?e.message:JSON.stringify(e,null,2)}
+function dayParam(){return $('availDate').value?'?as_of='+$('availDate').value:''}
+const tag=s=>`<span class="tag ${s}">${s}</span>`;
+
+async function getAccounts(){
+  try{
+    const {accounts}=await call('/api/accounts'+dayParam());
+    $('accountTable').querySelector('tbody').innerHTML=accounts.map(a=>`<tr>
+      <td>${a.id}</td><td>${a.name}</td><td>${a.region}</td><td>${a.priority}</td>
+      <td>${a.quota}</td><td>${a.used}</td><td>${a.ecological_reserved}</td>
+      <td>${a.effective_quota}</td><td>${a.reserved_outgoing}</td><td><b>${Math.round(a.available*100)/100}</b></td></tr>`).join('');
+  }catch(e){$('accountTable').querySelector('tbody').innerHTML='<tr><td colspan=10>'+e.message+'</td></tr>'}
+}
+
+function reservationPayload(){
+  return {account_id:+$('rAccount').value,start_date:$('rStart').value,end_date:$('rEnd').value,
+          amount:+$('rAmount').value,basis:$('rBasis').value,operator:$('rOperator').value};
+}
+
+async function previewReservation(){
+  try{
+    const p=await call('/api/reservations/preview',{method:'POST',headers:headers(),body:JSON.stringify(reservationPayload())});
+    $('rResult').textContent='';
+    const rows=p.squeezed.map(s=>`<tr><td>${s.transfer_id}</td><td>${s.effective_date}</td><td>${s.amount}</td><td>${Math.round(s.shortage*100)/100}</td></tr>`).join('')
+      ||'<tr><td colspan=4 class="muted">没有待审转让落入预留区间</td></tr>';
+    $('previewBox').style.display='block';
+    $('previewBox').innerHTML=`<b>预检结果（尚未提交）</b>
+      <p>可用额度：${Math.round(p.available_before*100)/100} → <b>${Math.round(p.available_after*100)/100}</b>；
+      生态预留锁定：${p.ecological_reserved_before} → ${p.ecological_reserved_after}；
+      将被挤到的待审转让：<b>${p.conflict_count}</b> 条。确认后这些冲突记录会留在待处理区。</p>
+      <table><thead><tr><th>转让ID</th><th>生效日</th><th>转让量</th><th>缺口</th></tr></thead><tbody>${rows}</tbody></table>
+      <p><button class="primary" onclick="confirmReservation()">确认登记（待生效）</button></p>`;
+  }catch(e){$('previewBox').style.display='none';show('rResult',e)}
+}
+
+async function confirmReservation(){
+  try{
+    const r=await call('/api/reservations',{method:'POST',headers:headers(),body:JSON.stringify(reservationPayload())});
+    $('previewBox').style.display='none';
+    show('rResult',{message:'已登记，状态待生效；生效后冲突进入待处理区',reservation:r});
+    await loadReservations();
+  }catch(e){show('rResult',e)}
+}
+
+async function loadReservations(){
+  const {reservations}=await call('/api/reservations');
+  $('reservationTable').querySelector('tbody').innerHTML=reservations.map(r=>{
+    let ops='';
+    if(r.status==='pending')ops=`<button onclick="activate(${r.id})">确认生效</button>`;
+    if(r.status==='active')ops=`<input id="rel${r.id}" type="date" style="width:140px"><button class="warn" onclick="release(${r.id})">提前解除</button>`;
+    return `<tr><td>${r.id}</td><td>${r.account_name}</td><td>${r.start_date} ~ ${r.end_date}</td>
+      <td>${r.amount}</td><td>${r.basis}</td><td>${r.operator}</td><td>${tag(r.status)}</td>
+      <td>${r.restored_amount}</td><td>${ops}</td></tr>`;
+  }).join('')||'<tr><td colspan=9 class="muted">暂无预留记录</td></tr>';
+}
+
+async function activate(id){
+  try{show('rResult',await call('/api/reservations/'+id+'/activate',{method:'POST',headers:headers(),body:'{}'}));
+      await Promise.all([loadReservations(),loadConflicts(),getAccounts()]);
+  }catch(e){show('rResult',e)}
+}
+async function release(id){
+  const as_of=$('rel'+id).value;
+  try{show('rResult',await call('/api/reservations/'+id+'/release',
+      {method:'POST',headers:headers(),body:JSON.stringify({as_of:as_of||null})}));
+      await Promise.all([loadReservations(),loadConflicts(),getAccounts()]);
+  }catch(e){show('rResult',e)}
+}
+
+async function loadConflicts(){
+  const {conflicts}=await call('/api/reservation-conflicts?status=all');
+  $('conflictTable').querySelector('tbody').innerHTML=conflicts.map(c=>`<tr>
+    <td>${c.id}</td><td>#${c.reservation_id}（${c.reservation_start} ~ ${c.reservation_end}）</td>
+    <td>${c.account_name}</td><td>${c.transfer_id}</td><td>${c.transfer_amount}</td>
+    <td>${c.effective_date}</td><td>${Math.round(c.shortage*100)/100}</td>
+    <td>${tag(c.status)}</td><td>${c.note}</td></tr>`).join('')
+    ||'<tr><td colspan=9 class="muted">待处理区为空</td></tr>';
+}
+
+async function transfer(){
+  try{show('result',await call('/api/transfers',{method:'POST',headers:headers(),
+    body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}));
+    await Promise.all([loadConflicts(),getAccounts()]);
+  }catch(e){show('result',e)}
+}
+async function approve(){
+  try{show('result',await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}));
+    await Promise.all([loadConflicts(),getAccounts()]);
+  }catch(e){show('result',e)}
+}
+async function reject(){
+  try{show('result',await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}));
+    await Promise.all([loadConflicts(),getAccounts()]);
+  }catch(e){show('result',e)}
+}
+async function simulate(){
+  try{show('drought',await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value+'&as_of='+droughtDate.value))}
+  catch(e){show('drought',e)}
+}
+$('availDate').value='2026-08-01';
+getAccounts();loadReservations();loadConflicts();
 </script></body></html>
