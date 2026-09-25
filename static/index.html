@@ -1,18 +1,255 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水资源权配置</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 18px}input,select,button{padding:7px;margin:3px}.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}pre{background:#f5f7f9;padding:12px;overflow:auto}small{color:#667}button{cursor:pointer}</style></head>
-<body><h1>跨区域水资源使用权</h1><p>示例账户初始化后，可查看余额、发起转让、审核，并模拟干旱分配。</p>
-<div class="card"><h2>身份</h2><input id="user" value="alice"><select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select></div>
-<div class="card"><h2>账户</h2><button onclick="getAccounts()">刷新账户</button><pre id="accounts">等待操作…</pre></div>
-<div class="card"><h2>发起转让</h2><input id="from" type="number" value="1" placeholder="转出账户"><input id="to" type="number" value="2" placeholder="转入账户"><input id="amount" type="number" value="400"><input id="date" type="date" value="2026-06-01"><button onclick="transfer()">提交审批</button><pre id="result"></pre></div>
-<div class="card"><h2>审批最新转让</h2><input id="transfer_id" type="number" placeholder="转让 ID"><button onclick="approve()">批准</button><button onclick="reject()">退回</button></div>
-<div class="card"><h2>干旱情景</h2><input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1"><button onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre></div>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>生态预留台 · 水权配置</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;max-width:1040px;margin:32px auto;padding:0 18px;color:#1f2d3d}
+input,select,button{padding:7px;margin:3px;font:inherit}
+button{cursor:pointer;border:1px solid #3a6ea5;background:#fff;border-radius:6px}
+button.primary{background:#3a6ea5;color:#fff}
+.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}
+.card h2{margin-top:0;font-size:17px}
+pre{background:#f5f7f9;padding:12px;overflow:auto;border-radius:8px;font-size:13px}
+small{color:#667}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border:1px solid #dde4ea;padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#f0f4f8}
+.warn{background:#fff7e6;border-color:#e8c98a}
+.ok{color:#1a7f37}.bad{color:#b42318}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:#eef2f6}
+.tag.active{background:#e3f2fd}.tag.released{background:#f1f1f1}.tag.expired{background:#fdecec}
+.tag.pending{background:#fff3cd}.tag.occupied{background:#e6f4ea}.tag.dismissed,.tag.rejected{background:#f1f1f1}
+</style></head>
+<body>
+<h1>生态预留台</h1>
+<p>在水权账户上按起止日期登记夏季生态预留水。提交申请先试算可用额度变化和会被挤到的待审转让，确认后冲突进入待处理区。</p>
+
+<div class="card"><h2>身份</h2>
+  <label>经办人 <input id="user" value="eco-dispatcher"></label>
+  <label>角色 <select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select></label>
+  <small>editor 登记/解除预留，reviewer 处理待审转让和待处理冲突，meter 登记取水。</small>
+</div>
+
+<div class="card"><h2>账户余额（含生态预留扣减）</h2>
+  <button onclick="getAccounts()">刷新账户</button>
+  <label>查看日期 <input id="asof" type="date"></label>
+  <div style="overflow:auto"><table id="accountTable"><thead><tr>
+    <th>ID</th><th>账户</th><th>地区</th><th>许可额度</th><th>已用</th><th>生态预留</th><th>扣减后额度</th><th>可用</th><th>有效期</th>
+  </tr></thead><tbody><tr><td colspan="9">等待刷新…</td></tr></tbody></table></div>
+  <pre id="accountsDetail" hidden></pre>
+</div>
+
+<div class="card warn"><h2>① 预留申请（提交试算）</h2>
+  <input id="rAccount" type="number" value="1" placeholder="账户 ID" style="width:90px">
+  <input id="rAmount" type="number" value="200" placeholder="预留水量" style="width:110px">
+  <label>起 <input id="rFrom" type="date" value="2026-07-01"></label>
+  <label>止 <input id="rTo" type="date" value="2026-08-31"></label><br>
+  <input id="rBasis" value="2026年夏季河道生态流量调度预案" placeholder="预留依据（文件/政策）" style="width:320px">
+  <input id="rOperator" value="eco-dispatcher" placeholder="经办人" style="width:150px"><br>
+  <button class="primary" onclick="previewReservation()">提交申请（试算）</button>
+  <pre id="preview">尚未提交。</pre>
+  <button id="confirmBtn" class="primary" onclick="confirmReservation()" hidden>② 确认登记该预留</button>
+</div>
+
+<div class="card"><h2>已登记预留</h2>
+  <button onclick="getReservations()">刷新预留</button>
+  <div style="overflow:auto"><table id="reservationTable"><thead><tr>
+    <th>ID</th><th>账户</th><th>预留水量</th><th>已被占用</th><th>区间</th><th>依据</th><th>经办人</th><th>状态</th><th>解除</th>
+  </tr></thead><tbody><tr><td colspan="9">等待刷新…</td></tr></tbody></table></div>
+</div>
+
+<div class="card warn"><h2>待处理区（被挤到的待审转让）</h2>
+  <button onclick="getConflicts()">刷新待处理区</button>
+  <div style="overflow:auto"><table id="conflictTable"><thead><tr>
+    <th>冲突#</th><th>预留#</th><th>转让#</th><th>缺口</th><th>转让量/生效日</th><th>申请人</th><th>状态</th><th>处理</th>
+  </tr></thead><tbody><tr><td colspan="8">等待刷新…</td></tr></tbody></table></div>
+  <small>“动用预留并批准”：该转让水量计入预留占用，随转让划转；预留提前解除时被占用部分不再恢复。</small>
+</div>
+
+<div class="card"><h2>发起转让</h2>
+  <input id="from" type="number" value="1" placeholder="转出账户" style="width:90px">
+  <input id="to" type="number" value="2" placeholder="转入账户" style="width:90px">
+  <input id="amount" type="number" value="200" style="width:100px">
+  <input id="date" type="date" value="2026-07-15">
+  <button class="primary" onclick="transfer()">提交审批</button><pre id="result"></pre>
+</div>
+
+<div class="card"><h2>审批普通转让</h2>
+  <input id="transfer_id" type="number" placeholder="转让 ID" style="width:100px">
+  <button onclick="approve()">批准</button><button onclick="reject()">退回</button>
+</div>
+
+<div class="card"><h2>登记取水</h2>
+  <input id="uAccount" type="number" value="1" placeholder="账户 ID" style="width:90px">
+  <input id="uAmount" type="number" value="50" style="width:90px">
+  <input id="uEvent" value="UP-2026-0002" placeholder="计量事件编号" style="width:160px">
+  <input id="uDate" type="date" value="2026-07-20">
+  <button class="primary" onclick="usage()">登记</button><pre id="usageResult"></pre>
+</div>
+
+<div class="card"><h2>提前解除预留</h2>
+  <input id="relId" type="number" placeholder="预留 ID" style="width:100px">
+  <input id="relDate" type="date" value="2026-07-20">
+  <input id="relReason" value="汛期来水偏丰，提前结束生态预留" placeholder="解除原因" style="width:280px">
+  <button onclick="releaseReservation()">提前解除</button><pre id="releaseResult"></pre>
+</div>
+
+<div class="card"><h2>干旱情景（按扣减预留后的额度分配）</h2>
+  <input id="supply" type="number" value="1200" style="width:110px">
+  <input id="reduction" type="number" value="0.3" step="0.1" style="width:80px">
+  <input id="dDate" type="date" value="2026-07-10">
+  <button class="primary" onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre>
+</div>
+
 <script>
+const $=id=>document.getElementById(id);
 const headers=()=>({'Content-Type':'application/json','X-User':user.value,'X-Role':role.value});
 async function call(url,opts={}){const r=await fetch(url,opts);const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
-async function getAccounts(){try{accounts.textContent=JSON.stringify(await call('/api/accounts'),null,2)}catch(e){accounts.textContent=e.message}}
-async function transfer(){try{result.textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2)}catch(e){result.textContent=e.message}}
-async function approve(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function reject(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function simulate(){try{drought.textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value),null,2)}catch(e){drought.textContent=e.message}}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const row=(...cs)=>'<tr>'+cs.map(c=>'<td>'+c+'</td>').join('')+'</tr>';
+const tag=(s,t=s)=>'<span class="tag '+esc(s)+'">'+esc(t)+'</span>';
+
+async function getAccounts(){
+  try{
+    const {accounts}=await call('/api/accounts');
+    const asof=$('asof').value;
+    const detailed=[];
+    const rows=await Promise.all(accounts.map(async a=>{
+      const q=asof?await call(`/api/accounts/${a.id}/available?as_of=${asof}`):{available:a.available,ecology_reserved:a.ecology_reserved,effective_quota:a.effective_quota};
+      detailed.push(q);
+      return row(a.id,esc(a.name),esc(a.region),a.quota,a.used,
+        q.ecology_reserved.toFixed?.(1)??q.ecology_reserved,
+        q.effective_quota.toFixed?.(1)??q.effective_quota,
+        '<b class="'+(q.available>0?'ok':'bad')+'">'+(q.available.toFixed?.(1)??q.available)+'</b>',
+        esc(a.valid_from+' ~ '+a.valid_to));
+    }));
+    $('accountTable').querySelector('tbody').innerHTML=rows.join('');
+    $('accountsDetail').hidden=false;
+    $('accountsDetail').textContent=JSON.stringify(detailed,null,2);
+  }catch(e){$('accountsDetail').hidden=false;$('accountsDetail').textContent=e.message}
+}
+
+function reservationPayload(){
+  return {account_id:+$('rAccount').value,amount:+$('rAmount').value,
+    valid_from:$('rFrom').value,valid_to:$('rTo').value,
+    basis:$('rBasis').value,operator:$('rOperator').value};
+}
+
+async function previewReservation(){
+  $('confirmBtn').hidden=true;
+  try{
+    const p=await call('/api/reservations/preview',{method:'POST',headers:headers(),body:JSON.stringify(reservationPayload())});
+    window.__lastPreview=reservationPayload();
+    const b=p.availability_before,a=p.availability_after;
+    let txt='账户：'+p.account_name+'（#'+p.account_id+'）\n'
+      +'区间：'+p.valid_from+' ~ '+p.valid_to+'  预留：'+p.amount+'\n'
+      +'依据：'+p.basis+'  经办人：'+p.operator+'\n\n'
+      +'可用额度：'+b.available.toFixed(2)+' → '+a.available.toFixed(2)
+      +'（变化 '+(p.available_change>=0?'+':'')+p.available_change.toFixed(2)+'）\n'
+      +'生态预留合计：'+b.ecology_reserved.toFixed(2)+' → '+a.ecology_reserved.toFixed(2)+'\n'
+      +'扣减后额度：'+b.effective_quota.toFixed(2)+' → '+a.effective_quota.toFixed(2)+'\n';
+    if(p.squeezed.length){
+      txt+='\n会被挤到的待审转让 '+p.squeezed.length+' 条：\n'
+        +p.squeezed.map(s=>'  - 转让 #'+s.transfer_id+' 量 '+s.amount+' 生效 '+s.effective_date
+          +'（缺口 '+s.shortfall.toFixed(2)+'，申请人 '+s.created_by+'）').join('\n');
+    }else{
+      txt+='\n当前没有会被挤到的待审转让。';
+    }
+    $('preview').textContent=txt;
+    $('confirmBtn').hidden=false;
+  }catch(e){$('preview').textContent='试算失败：'+e.message}
+}
+
+async function confirmReservation(){
+  if(!window.__lastPreview)return;
+  try{
+    const saved=await call('/api/reservations/confirm',{method:'POST',headers:headers(),body:JSON.stringify(window.__lastPreview)});
+    $('preview').textContent='已登记预留 #'+saved.id+'，待处理冲突记录：'
+      +(saved.conflict_ids.length?('#'+saved.conflict_ids.join('、')):'无')
+      +'\n'+JSON.stringify(saved.squeezed,null,2);
+    $('confirmBtn').hidden=true;window.__lastPreview=null;
+    getReservations();getConflicts();getAccounts();
+  }catch(e){$('preview').textContent='确认失败：'+e.message}
+}
+
+async function getReservations(){
+  try{
+    const {reservations}=await call('/api/reservations');
+    if(!reservations.length){$('reservationTable').querySelector('tbody').innerHTML=row('<i>暂无</i>','','','','','','','','');return}
+    $('reservationTable').querySelector('tbody').innerHTML=reservations.map(r=>{
+      const release = r.state==='active'
+        ? `<button onclick="quickRelease(${r.id})">提前解除</button>` : '—';
+      return row(r.id,'#'+r.account_id,r.amount,r.occupied_amount,
+        esc(r.valid_from+' ~ '+r.valid_to)+(r.release_date?('<br><small>解除日 '+esc(r.release_date)+(r.release_reason?'：'+esc(r.release_reason):'')+'</small>'):''),
+        esc(r.basis),esc(r.operator),
+        tag(r.state,r.status==='active'?(r.state==='active'?'生效中':'已到期'):'已解除'),release);
+    }).join('');
+  }catch(e){$('reservationTable').querySelector('tbody').innerHTML=row('<span class="bad">'+esc(e.message)+'</span>','','','','','','','','')}
+}
+function quickRelease(id){$('relId').value=id;location.hash='';document.documentElement.scrollIntoView();$('relId').focus()}
+
+async function getConflicts(){
+  try{
+    const {conflicts}=await call('/api/reservations/conflicts?status=pending');
+    const all=await call('/api/reservations/conflicts');
+    if(!all.conflicts.length){$('conflictTable').querySelector('tbody').innerHTML=row('<i>暂无</i>','','','','','','','');return}
+    $('conflictTable').querySelector('tbody').innerHTML=all.conflicts.map(c=>row(
+      c.id,c.reservation_id,c.transfer_id,c.shortfall.toFixed(2),
+      c.transfer_amount+' / '+esc(c.effective_date),esc(c.created_by),
+      tag(c.status==='pending'?'pending':c.status,c.status==='pending'?'待处理':(c.status==='occupied'?'已动用预留':'已关闭')),
+      c.status==='pending'
+        ? `<button class="primary" onclick="occupyConflict(${c.id})">动用预留并批准</button>
+           <button onclick="dismissConflict(${c.id})">仅关闭</button>`
+        : esc(c.note)
+    )).join('');
+  }catch(e){$('conflictTable').querySelector('tbody').innerHTML=row('<span class="bad">'+esc(e.message)+'</span>','','','','','','','')}
+}
+
+async function occupyConflict(id){
+  try{
+    const r=await call(`/api/reservations/conflicts/${id}/occupy`,{method:'POST',headers:headers(),body:'{}'});
+    alert('冲突 #'+id+' 已动用预留 '+r.occupied_amount+'，转让 #'+r.transfer_id+' 已批准');
+    getConflicts();getReservations();getAccounts();
+  }catch(e){alert('处理失败：'+e.message)}
+}
+async function dismissConflict(id){
+  try{await call(`/api/reservations/conflicts/${id}/dismiss`,{method:'POST',headers:headers(),body:'{}'});getConflicts()}
+  catch(e){alert('处理失败：'+e.message)}
+}
+
+async function transfer(){
+  try{
+    $('result').textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),
+      body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2);
+    getAccounts();
+  }catch(e){$('result').textContent=e.message}
+}
+async function approve(){
+  try{$('result').textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2);getAccounts()}
+  catch(e){$('result').textContent=e.message}
+}
+async function reject(){
+  try{$('result').textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2);getConflicts()}
+  catch(e){$('result').textContent=e.message}
+}
+async function usage(){
+  try{
+    $('usageResult').textContent=JSON.stringify(await call('/api/usage',{method:'POST',headers:headers(),
+      body:JSON.stringify({account_id:+uAccount.value,amount:+uAmount.value,meter_event_id:uEvent.value,occurred_at:uDate.value})}),null,2);
+    getAccounts();
+  }catch(e){$('usageResult').textContent=e.message}
+}
+async function releaseReservation(){
+  try{
+    const r=await call('/api/reservations/'+relId.value+'/release',{method:'POST',headers:headers(),
+      body:JSON.stringify({release_date:relDate.value,reason:relReason.value})});
+    $('releaseResult').textContent='预留 #'+r.id+' 已提前解除：恢复可用 '+r.restored_amount.toFixed(2)
+      +'；已被占用 '+r.retained_occupied.toFixed(2)+' 随原转让记录继续，不再恢复。';
+    getReservations();getAccounts();
+  }catch(e){$('releaseResult').textContent='解除失败：'+e.message}
+}
+async function simulate(){
+  try{drought.textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value+'&as_of='+dDate.value),null,2)}
+  catch(e){drought.textContent=e.message}
+}
+
+getAccounts();getReservations();getConflicts();
 </script></body></html>
